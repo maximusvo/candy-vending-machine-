@@ -5,71 +5,138 @@
 #include <Debouncer.h>
 #include <Rotary.h>
 
-#define calibration_factor  -7050.0   
+#define calibration_factor  -252006   // scale calibration factor  
 // **pin config**
-#define DOUT                5         // LCD
+#define DOUT                5         // scale
 #define CLK                 4
-#define start_input         8
-
-#define vibrator            7         // actors
+#define start_input         8         // input for signal to start mechanism
+#define vibrator            12        // actors
 #define servo               9
 #define ROT_PIN_A           A0        // encoder
 #define ROT_PIN_B           A1
 #define ROT_PUSH            A2
+#define reset               11
 
 int     pos = 0;                      // variable to store the servo position
-char    weight[8];                    // buffer to store scale input
-boolean flag;
-int     millis_start = 0;
-int     millis_startup = 0;
+char    char_bucket[8];               // bucket to store floating numbers
+boolean flag_vibrator_running = true;
+long    millis_process = 0;
+long    millis_startup = 0;
+long    current_millis;
+long    process_watch;
 int     current_min = 0;
-int     state = 0;
-int     stated_weight = 100;
-int     scale_step = 10;
+float   stated_weight = 10.0;
 int     mode = 1;
 int     time_to_start = 60;
 
-Servo myservo;                        // create servo object to control a servo
-LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);  // LCD I2C Adresse setzen Pin A4 & A5
-HX711 scale(DOUT, CLK);
+Servo myservo;                                                  // create servo object to control a servo
+LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);  // sets LCD at pin A4 & A5 and I2C adress 
+HX711 scale(DOUT, CLK);                                         // create scale object
 
 // define method signatures for encoder
 void onRotate(short direction, Rotary* rotary);
 void onRotPushPress();
 void onRotPushRelease(unsigned long pressTime);
+// define methods for mechanism
+void start_giveLoad(Task* me);
+void giveLoad(Task* me);
+void time_last_startup(Task* me);
+void servo_turn_up(Task* me);
+void servo_turn_down(Task* me);
+// define method to clear the lcd
+boolean clear_lcd(Task* task);
+
+Task t_start_giveLoad(100, start_giveLoad);
+Task t_giveLoad(100, giveLoad);
+Task t_time_last_startup(100, time_last_startup);
+Task t_servo_turn_up(10, servo_turn_up);
+Task t_servo_turn_down(10, servo_turn_down);
+DelayRun t_clear_lcd(3000, clear_lcd);
 
 Rotary r(ROT_PIN_A, ROT_PIN_B, onRotate, true);
 Debouncer rotPushDebouncer(ROT_PUSH, MODE_CLOSE_ON_PUSH, onRotPushPress, onRotPushRelease, true);
 
 void setup() {
-  PciManager.registerListener(ROT_PUSH, &rotPushDebouncer);
-  Serial.begin(9600);
-  lcd.begin(16,2);                    // activate LCD for 16 chars and 2 lines
+  // activate serial communication
+  Serial.begin(9600);                 
+  // activate LCD for 16 chars and 2 lines
+  lcd.begin(16,2);                    
   lcd.backlight();
-  myservo.attach(servo);              // attaches the servo to the servo object
-  pinMode(start_input, INPUT_PULLUP);
-  pinMode(vibrator, OUTPUT);
-
+  // activate timers and navigation hardware
+  SoftTimer.add(&t_start_giveLoad);  
+  SoftTimer.add(&t_time_last_startup);
+  PciManager.registerListener(ROT_PUSH, &rotPushDebouncer);
+  pinMode(start_input, INPUT_PULLUP); // define buzzer/startup input
+  pinMode(vibrator, OUTPUT);          // define vibrator output
+  pinMode(reset, INPUT);
+  
+  myservo.attach(servo);              // attaches the servo to the servo object and make clear there is no weight on the scale by moving the servo ones
+  for (pos = 0; pos <= 180; pos += 1) 
+  {                                                                             
+    myservo.write(pos);
+    delay(10);                                                          
+  }
+  for (pos = 180; pos >= 0; pos -= 1) 
+  {                                                                             
+    myservo.write(pos);  
+    delay(10);                                                         
+  }
+  
+  // scale config
   scale.set_scale(calibration_factor); 
-  scale.tare();                       //Assuming there is no weight on the scale at start up, reset the scale to 0
+  scale.tare();                       // assuming there is no weight on the scale at start up, reset the scale to 0
   
   Serial.println("System startup finished");
   lcd.clear();
   lcd.setCursor(0,0);
-  lcd.write("** Startup");
+  lcd.write("** Startup  **");
   lcd.setCursor(0,1);
-  lcd.write("** finished");
-  delay(3000);
-  lcd.clear();
+  lcd.write("** finished **");
+  t_clear_lcd.startDelayed();
 }
 
-void loop() {
-  //encoder
-   SoftTimer.run();
-   int corrent_millis =  millis();
-   if(corrent_millis - millis_startup >= 60000)
+void servo_turn_up(Task* me)
+{
+  if(pos != 0)
+  {
+    pos -= 1;
+    myservo.write(pos);                                                          // tell servo to go to position in variable 'pos'
+  }
+  else
+  {
+    SoftTimer.remove(&t_servo_turn_up);
+  }
+}
+
+void servo_turn_down(Task* me)
+{
+  if(pos != 180)
+  {
+    pos += 1;
+    myservo.write(pos);                                                          // tell servo to go to position in variable 'pos'
+  }
+  else
+  {
+    SoftTimer.remove(&t_servo_turn_down);
+  }
+}
+
+boolean clear_lcd(Task* me)
+{
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.write("Let's get");
+  lcd.setCursor(0,1);
+  lcd.write("some sweet");
+  return true;
+}
+
+void time_last_startup(Task* me)
+{
+   current_millis = millis();
+   if(current_millis - millis_startup >= 60000.0)
    {
-    millis_startup = corrent_millis;
+    millis_startup = current_millis;
     if(current_min <= 480)
     {
       current_min += 1;
@@ -78,131 +145,119 @@ void loop() {
     {
       current_min = 0;
     }
-    Serial.println(current_min);
    }
+}
+// method to start mechanism
+void start_giveLoad(Task* me)
+{
+   if((digitalRead(start_input) == LOW & (mode == 1 | mode == 3)) | (current_min >= time_to_start & (mode == 2 | mode == 3)))
+   {
+     lcd.clear();
+     process_watch = current_millis;
+     // process finished
+     SoftTimer.add(&t_giveLoad);
+     SoftTimer.remove(&t_start_giveLoad);
+   }
+
+}
+// mechanism
+void giveLoad(Task* me)
+{
+  float scale_status = scale.get_units()*100;
   
-  if((state == 0 & digitalRead(start_input) == LOW & (mode == 1 | mode == 3)) | (state == 0 & time_to_start == current_min & (mode == 2 | mode == 3)))
+  if (current_millis - process_watch >= 20000.0)                                  // force a reset after 20 seconds of running the vibrator
   {
-    state=1;
+    pinMode(reset, OUTPUT);
+    digitalWrite(reset, LOW);
   }
   
-  if(state==1)
-  { 
-    if((digitalRead(vibrator) == LOW & scale.get_units()*100 <= 10) | flag == true) // start vibrator and check the weight
-    {
-      flag = false;
-      digitalWrite(vibrator, HIGH);
-      dtostrf(fabsf(scale.get_units()*100), 6, 2, weight);                          // converts the float scale output to char
-      lcd.clear();
-      lcd.setCursor(0,0);
-      lcd.write(weight);
-      lcd.write("g POWER");
-    }
-    
-    if(digitalRead(vibrator) == HIGH & scale.get_units()*100 >= scale_step)         // if the scale_step is reached, stop vibrator
-    {
-      digitalWrite(vibrator, LOW);
-      scale_step += 10;
-      millis_start = millis();
-    }
-                                                                                    // wait 1 second for more load and start the vibrator again, if the stated_weight isn't reached
-    if(digitalRead(vibrator) == LOW & corrent_millis - millis_start >= 1000 & !(scale.get_units()*100 >= stated_weight))  
-    {
-      millis_start = millis();
-      flag = true;
-    }
-                                                                                    // if the stated_weight is reached, stop the vibrator
-    if(scale.get_units()*100 >= stated_weight)
-    {
-      flag = false;
-      digitalWrite(vibrator, LOW);
-      millis_start = millis();
-    }
-                                                                                    // wait 1 second and start the payout
-    if(corrent_millis - millis_start >= 1000 & scale.get_units()*100 >= stated_weight)
-    {
-      lcd.clear();
-      lcd.setCursor(0,0);
-      lcd.write("Ready to eat!");
-      
-      for (pos = 0; pos <= 180; pos += 1) 
-      {                                                                              // goes from 0 degrees to 180 degrees - in steps of 1 degree
-        myservo.write(pos);                                                          // tell servo to go to position in variable 'pos'
-      }
-      millis_start = millis();
-    }
-    
-    if(pos >= 180 & corrent_millis - millis_start >= 1000)                           // if servo reached 180 degrees wait 1 second and pull the servo back
-    {
-      for (pos = 180; pos >= 0; pos -= 1) 
-      {                                         
-        myservo.write(pos);                                                          
-      }
-      current_min = 0;
-      state = 0;                                                                        // process finished
-    }
+  if (scale_status <= stated_weight & flag_vibrator_running)
+  {
+    digitalWrite(vibrator, HIGH);
+    dtostrf(fabsf(scale_status), 6, 1, char_bucket);                              // converts the float scale output to char
+    lcd.setCursor(0,0);
+    lcd.write("Prepairing...");
+    lcd.setCursor(0,1);
+    lcd.write(char_bucket);
+    lcd.write("g Energy");
+    millis_process = millis();
+  }
+  
+  if (scale_status >= stated_weight)
+  {
+    digitalWrite(vibrator, LOW);
+    flag_vibrator_running = false;
+  }
+                                                                                  // wait 2 seconds and start the payout
+  if(current_millis  - millis_process >= 2000.0 & !flag_vibrator_running)
+  {
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.write("Ready to eat!");
+    SoftTimer.add(&t_servo_turn_down);
+    millis_process = current_millis ;
+  }
+  
+  if(pos >= 180 & current_millis  - millis_process >= 1000.0)                      // if servo reached 180 degrees wait 1 second and pull the servo back
+  {
+    SoftTimer.add(&t_servo_turn_up);
+    current_min = 0;
+    // process finished 
+    flag_vibrator_running = true;        
+    t_clear_lcd.startDelayed();                                                                       
+    SoftTimer.add(&t_start_giveLoad);
+    SoftTimer.remove(&t_giveLoad);
   }
 }
-
+  
 void onRotate(short direction, Rotary* rotary) {
+  
   if(mode == 5)
   {
     if(direction == DIRECTION_CW) {
-      if(stated_weight < 100)
+      if(stated_weight < 100.0)
       {
-        stated_weight += 10;
+        stated_weight += 10.0;
       }
-      dtostrf(stated_weight, 6, 0, weight);
-      lcd.clear();
-      lcd.setCursor(0,0);
-      lcd.write("Change max load:");
-      lcd.setCursor(0,1);
-      lcd.write(weight);
-      lcd.write("g");
     }
     if(direction == DIRECTION_CCW) {
-      if(stated_weight >= 20)
+      if(stated_weight >= 20.0)
       {
-        stated_weight -= 10;
+        stated_weight -= 10.0;
       }
-      dtostrf(stated_weight, 6, 0, weight);
-      lcd.clear();
-      lcd.setCursor(0,0);
-      lcd.write("Change max load:");
-      lcd.setCursor(0,1);
-      lcd.write(weight);
-      lcd.write("g");
     }
+    dtostrf(stated_weight, 6, 0, char_bucket);
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.write("Change max load:");
+    lcd.setCursor(0,1);
+    lcd.write(char_bucket);
+    lcd.write("g");
   }
+  
   if(mode == 4)
-    {
-      if(direction == DIRECTION_CW) {
-        if(time_to_start < 480)
-        {
-          time_to_start += 10;
-        }
-        dtostrf(time_to_start, 6, 0, weight);
-        lcd.clear();
-        lcd.setCursor(0,0);
-        lcd.write("Startup every/:");
-        lcd.setCursor(0,1);
-        lcd.write(weight);
-        lcd.write("min");
-      }
-      if(direction == DIRECTION_CCW) {
-        if(time_to_start >= 10)
-        {
-          time_to_start -= 10;
-        }
-        dtostrf(time_to_start, 6, 0, weight);
-        lcd.clear();
-        lcd.setCursor(0,0);
-        lcd.write("Startup every/:");
-        lcd.setCursor(0,1);
-        lcd.write(weight);
-        lcd.write("min");
+  {
+    if(direction == DIRECTION_CW) {
+      if(time_to_start < 480)
+      {
+        time_to_start += 5;
       }
     }
+    if(direction == DIRECTION_CCW) {
+      if(time_to_start >= 10)
+      {
+        time_to_start -= 5;
+      }
+    }
+    dtostrf(time_to_start, 6, 0, char_bucket);
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.write("Startup every/:");
+    lcd.setCursor(0,1);
+    lcd.write(char_bucket);
+    lcd.write("min");
+  }
+  t_clear_lcd.startDelayed();
 }
 
 void onRotPushPress() {
@@ -210,53 +265,39 @@ void onRotPushPress() {
     {
       mode += 1;
     }
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.write("Mode:");
+    lcd.setCursor(0,1);
     switch(mode) 
     {
       case 1: 
-        lcd.clear();
-        lcd.setCursor(0,0);
-        lcd.write("Modus:");
-        lcd.setCursor(0,1);
-        lcd.write("Button");
+        lcd.write("Input");
         break;
       case 2: 
-        lcd.clear();
-        lcd.setCursor(0,0);
-        lcd.write("Modus:");
-        lcd.setCursor(0,1);
         lcd.write("Time");
         current_min = 0;
         break;
       case 3: 
-        lcd.clear();
-        lcd.setCursor(0,0);
-        lcd.write("Modus:");
-        lcd.setCursor(0,1);
-        lcd.write("Button and Time");
+        lcd.write("Input and Time");
         current_min = 0;
         break;
       case 4: 
-        lcd.clear();
-        lcd.setCursor(0,0);
-        lcd.write("Modus:");
-        lcd.setCursor(0,1);
         lcd.write("Change time");
         break;
       case 5: 
-        lcd.clear();
-        lcd.setCursor(0,0);
-        lcd.write("Modus:");
-        lcd.setCursor(0,1);
-        lcd.write("Change loade");
+        lcd.write("Change payload");
         break;
       default: break;
     }
     if(mode > 5)
     {
+      lcd.clear();
       mode = 0;
     }
 }
+
 void onRotPushRelease(unsigned long pressTime) {
-  
+  t_clear_lcd.startDelayed();
 }
 
