@@ -19,13 +19,14 @@
 
 int     pos = 0;                      // variable to store the servo position
 char    char_bucket[8];               // bucket to store floating numbers
-boolean flag_vibrator_running = true;
+boolean flag_vibrator_running = false;
 long    millis_process = 0;
 long    millis_startup = 0;
 long    current_millis;
 long    process_watch;
 int     current_min = 0;
 float   stated_weight = 10.0;
+float   scale_status_begin = 0.0;
 int     mode = 1;
 int     time_to_start = 60;
 
@@ -43,15 +44,19 @@ void giveLoad(Task* me);
 void time_last_startup(Task* me);
 void servo_turn_up(Task* me);
 void servo_turn_down(Task* me);
+void vibrator_step(Task* task);
 // define method to clear the lcd
 boolean clear_lcd(Task* task);
+boolean false_vibrator_running(Task* task);
 
 Task t_start_giveLoad(100, start_giveLoad);
 Task t_giveLoad(100, giveLoad);
-Task t_time_last_startup(100, time_last_startup);
+Task t_time_last_startup(50, time_last_startup);
 Task t_servo_turn_up(10, servo_turn_up);
 Task t_servo_turn_down(10, servo_turn_down);
+Task t_vibrator_step(10, vibrator_step);
 DelayRun t_clear_lcd(3000, clear_lcd);
+DelayRun t_false_vibrator_running(2000, false_vibrator_running);
 
 Rotary r(ROT_PIN_A, ROT_PIN_B, onRotate, true);
 Debouncer rotPushDebouncer(ROT_PUSH, MODE_CLOSE_ON_PUSH, onRotPushPress, onRotPushRelease, true);
@@ -71,17 +76,17 @@ void setup() {
   pinMode(reset, INPUT);
   
   myservo.attach(servo);              // attaches the servo to the servo object and make clear there is no weight on the scale by moving the servo ones
-  for (pos = 0; pos <= 180; pos += 1) 
+  for (pos = 0; pos < 180; pos += 1) 
   {                                                                             
     myservo.write(pos);
     delay(10);                                                          
   }
-  for (pos = 180; pos >= 0; pos -= 1) 
+  for (pos = 180; pos > 0; pos -= 1) 
   {                                                                             
     myservo.write(pos);  
     delay(10);                                                         
   }
-  
+
   // scale config
   scale.set_scale(calibration_factor); 
   scale.tare();                       // assuming there is no weight on the scale at start up, reset the scale to 0
@@ -99,8 +104,8 @@ void servo_turn_up(Task* me)
 {
   if(pos != 0)
   {
-    pos -= 1;
     myservo.write(pos);                                                          // tell servo to go to position in variable 'pos'
+    pos -= 1;
   }
   else
   {
@@ -112,8 +117,8 @@ void servo_turn_down(Task* me)
 {
   if(pos != 180)
   {
-    pos += 1;
     myservo.write(pos);                                                          // tell servo to go to position in variable 'pos'
+    pos += 1;
   }
   else
   {
@@ -131,6 +136,32 @@ boolean clear_lcd(Task* me)
   return true;
 }
 
+boolean false_vibrator_running(Task* me)
+{
+  flag_vibrator_running = LOW;
+  return true;
+}
+// method to run the vibrator in steps. the method stops the vibrator after the scale status has increased to 3g.
+void vibrator_step(Task* me)
+{
+  float scale_status = scale.get_units()*100;
+  digitalWrite(vibrator, HIGH);
+  flag_vibrator_running = true;
+  
+  if (scale_status - scale_status_begin >= 3.0)                                 
+  {
+    digitalWrite(vibrator, LOW);
+    t_false_vibrator_running.startDelayed();
+    SoftTimer.remove(&t_vibrator_step);
+  }
+  
+  if (current_millis - process_watch >= 20000.0)                                  // force a reset after 20 seconds of running the vibrator
+  {
+    pinMode(reset, OUTPUT);
+    digitalWrite(reset, LOW);
+  }
+}
+// method to check the time
 void time_last_startup(Task* me)
 {
    current_millis = millis();
@@ -165,45 +196,39 @@ void giveLoad(Task* me)
 {
   float scale_status = scale.get_units()*100;
   
-  if (current_millis - process_watch >= 20000.0)                                  // force a reset after 20 seconds of running the vibrator
+  if (!flag_vibrator_running & scale_status < stated_weight & pos == 0)
   {
-    pinMode(reset, OUTPUT);
-    digitalWrite(reset, LOW);
+    scale_status_begin = scale_status;
+    SoftTimer.add(&t_vibrator_step);
   }
   
-  if (scale_status <= stated_weight & flag_vibrator_running)
+  if (scale_status >= stated_weight & !flag_vibrator_running)
   {
-    digitalWrite(vibrator, HIGH);
+    SoftTimer.remove(&t_vibrator_step);
+  }
+  else
+  {
     dtostrf(fabsf(scale_status), 6, 1, char_bucket);                              // converts the float scale output to char
     lcd.setCursor(0,0);
     lcd.write("Prepairing...");
     lcd.setCursor(0,1);
     lcd.write(char_bucket);
     lcd.write("g Energy");
-    millis_process = millis();
+    millis_process = current_millis;
   }
-  
-  if (scale_status >= stated_weight)
-  {
-    digitalWrite(vibrator, LOW);
-    flag_vibrator_running = false;
-  }
-                                                                                  // wait 2 seconds and start the payout
-  if(current_millis  - millis_process >= 2000.0 & !flag_vibrator_running)
+                                                                                  // wait 3 seconds and start the payout
+  if(current_millis - millis_process >= 3000.0 & !flag_vibrator_running & pos == 0)
   {
     lcd.clear();
     lcd.setCursor(0,0);
     lcd.write("Ready to eat!");
     SoftTimer.add(&t_servo_turn_down);
-    millis_process = current_millis ;
   }
-  
-  if(pos >= 180 & current_millis  - millis_process >= 1000.0)                      // if servo reached 180 degrees wait 1 second and pull the servo back
+  if(pos >= 180)                                                                  // if servo reached 180 degrees wait 1,5 second and pull the servo back
   {
     SoftTimer.add(&t_servo_turn_up);
     current_min = 0;
-    // process finished 
-    flag_vibrator_running = true;        
+    // process finished        
     t_clear_lcd.startDelayed();                                                                       
     SoftTimer.add(&t_start_giveLoad);
     SoftTimer.remove(&t_giveLoad);
