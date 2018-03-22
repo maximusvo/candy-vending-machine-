@@ -5,7 +5,7 @@
 #include <Debouncer.h>
 #include <Rotary.h>
 
-#define calibration_factor  -252006   // scale calibration factor  
+#define calibration_factor  -7160.00   // scale calibration factor  
 // **pin config**
 #define DOUT                5         // scale
 #define CLK                 4
@@ -20,12 +20,13 @@
 int     pos = 0;                      // variable to store the servo position
 char    char_bucket[8];               // bucket to store floating numbers
 boolean flag_vibrator_running = false;
+boolean flag_load = false;
 long    millis_process = 0;
 long    millis_startup = 0;
 long    current_millis;
 long    process_watch;
 int     current_min = 0;
-float   stated_weight = 10.0;
+float   stated_weight = 5.0;
 float   scale_status_begin = 0.0;
 int     mode = 1;
 int     time_to_start = 60;
@@ -44,19 +45,19 @@ void giveLoad(Task* me);
 void time_last_startup(Task* me);
 void servo_turn_up(Task* me);
 void servo_turn_down(Task* me);
-void vibrator_step(Task* task);
 // define method to clear the lcd
 boolean clear_lcd(Task* task);
 boolean false_vibrator_running(Task* task);
+boolean true_vibrator_running(Task* task);
 
 Task t_start_giveLoad(100, start_giveLoad);
 Task t_giveLoad(100, giveLoad);
 Task t_time_last_startup(50, time_last_startup);
 Task t_servo_turn_up(10, servo_turn_up);
 Task t_servo_turn_down(10, servo_turn_down);
-Task t_vibrator_step(10, vibrator_step);
 DelayRun t_clear_lcd(3000, clear_lcd);
-DelayRun t_false_vibrator_running(2000, false_vibrator_running);
+DelayRun t_false_vibrator_running(120, false_vibrator_running);
+DelayRun t_true_vibrator_running(700, true_vibrator_running);
 
 Rotary r(ROT_PIN_A, ROT_PIN_B, onRotate, true);
 Debouncer rotPushDebouncer(ROT_PUSH, MODE_CLOSE_ON_PUSH, onRotPushPress, onRotPushRelease, true);
@@ -138,29 +139,19 @@ boolean clear_lcd(Task* me)
 
 boolean false_vibrator_running(Task* me)
 {
-  flag_vibrator_running = LOW;
+  digitalWrite(vibrator, LOW);
+  flag_vibrator_running = false;
   return true;
 }
-// method to run the vibrator in steps. the method stops the vibrator after the scale status has increased to 3g.
-void vibrator_step(Task* me)
+
+boolean true_vibrator_running(Task* me)
 {
-  float scale_status = scale.get_units()*100;
   digitalWrite(vibrator, HIGH);
-  flag_vibrator_running = true;
   
-  if (scale_status - scale_status_begin >= 3.0)                                 
-  {
-    digitalWrite(vibrator, LOW);
-    t_false_vibrator_running.startDelayed();
-    SoftTimer.remove(&t_vibrator_step);
-  }
-  
-  if (current_millis - process_watch >= 20000.0)                                  // force a reset after 20 seconds of running the vibrator
-  {
-    pinMode(reset, OUTPUT);
-    digitalWrite(reset, LOW);
-  }
+  t_false_vibrator_running.startDelayed();
+  return true;
 }
+
 // method to check the time
 void time_last_startup(Task* me)
 {
@@ -194,19 +185,28 @@ void start_giveLoad(Task* me)
 // mechanism
 void giveLoad(Task* me)
 {
-  float scale_status = scale.get_units()*100;
+  if (current_millis - process_watch >= 20000.0)                                  // force a reset after 20 seconds of running the vibrator
+  {
+    pinMode(reset, OUTPUT);
+    digitalWrite(reset, LOW);
+  }
   
-  if (!flag_vibrator_running & scale_status < stated_weight & pos == 0)
+  float scale_status = scale.get_units();
+  
+  if (!flag_load & !flag_vibrator_running & scale_status < stated_weight & pos == 0)
   {
     scale_status_begin = scale_status;
-    SoftTimer.add(&t_vibrator_step);
+    flag_vibrator_running = true;
+    t_true_vibrator_running.startDelayed();
   }
   
-  if (scale_status >= stated_weight & !flag_vibrator_running)
+  if (scale_status >= stated_weight & !flag_load)
   {
-    SoftTimer.remove(&t_vibrator_step);
+    digitalWrite(vibrator, LOW);
+    flag_vibrator_running = false;
+    flag_load = true;
   }
-  else
+  if (!flag_load)
   {
     dtostrf(fabsf(scale_status), 6, 1, char_bucket);                              // converts the float scale output to char
     lcd.setCursor(0,0);
@@ -217,7 +217,7 @@ void giveLoad(Task* me)
     millis_process = current_millis;
   }
                                                                                   // wait 3 seconds and start the payout
-  if(current_millis - millis_process >= 3000.0 & !flag_vibrator_running & pos == 0)
+  if(current_millis - millis_process >= 3000.0 & flag_load & pos == 0)
   {
     lcd.clear();
     lcd.setCursor(0,0);
@@ -228,8 +228,9 @@ void giveLoad(Task* me)
   {
     SoftTimer.add(&t_servo_turn_up);
     current_min = 0;
-    // process finished        
-    t_clear_lcd.startDelayed();                                                                       
+    // process finished    
+    flag_load = false;  
+    t_clear_lcd.startDelayed();                                                                         
     SoftTimer.add(&t_start_giveLoad);
     SoftTimer.remove(&t_giveLoad);
   }
@@ -240,15 +241,15 @@ void onRotate(short direction, Rotary* rotary) {
   if(mode == 5)
   {
     if(direction == DIRECTION_CW) {
-      if(stated_weight < 100.0)
+      if(stated_weight < 50.0)
       {
-        stated_weight += 10.0;
+        stated_weight += 5.0;
       }
     }
     if(direction == DIRECTION_CCW) {
-      if(stated_weight >= 20.0)
+      if(stated_weight >= 10.0)
       {
-        stated_weight -= 10.0;
+        stated_weight -= 5.0;
       }
     }
     dtostrf(stated_weight, 6, 0, char_bucket);
