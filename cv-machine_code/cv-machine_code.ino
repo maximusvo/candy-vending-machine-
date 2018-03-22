@@ -56,8 +56,8 @@ Task t_time_last_startup(50, time_last_startup);
 Task t_servo_turn_up(10, servo_turn_up);
 Task t_servo_turn_down(10, servo_turn_down);
 DelayRun t_clear_lcd(3000, clear_lcd);
-DelayRun t_false_vibrator_running(120, false_vibrator_running);
-DelayRun t_true_vibrator_running(700, true_vibrator_running);
+DelayRun t_false_vibrator_running(150, false_vibrator_running);
+DelayRun t_true_vibrator_running(1000, true_vibrator_running);
 
 Rotary r(ROT_PIN_A, ROT_PIN_B, onRotate, true);
 Debouncer rotPushDebouncer(ROT_PUSH, MODE_CLOSE_ON_PUSH, onRotPushPress, onRotPushRelease, true);
@@ -187,7 +187,7 @@ void start_giveLoad(Task* me)
 // mechanism
 void giveLoad(Task* me)
 {
-  if (current_millis - process_watch >= 20000.0)                                  // force a reset after 20 seconds of running the vibrator
+  if (current_millis - process_watch >= 50000.0)                                  // force a reset after 20 seconds of running the vibrator
   {
     pinMode(reset, OUTPUT);
     digitalWrite(reset, LOW);
