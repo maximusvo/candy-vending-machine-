@@ -87,8 +87,9 @@ void setup() {
     myservo.write(pos);  
     delay(10);                                                         
   }
-
+  
   // scale config
+  delay(100);
   scale.set_scale(calibration_factor); 
   scale.tare();                       // assuming there is no weight on the scale at start up, reset the scale to 0
   
@@ -101,11 +102,12 @@ void setup() {
   t_clear_lcd.startDelayed();
 }
 
+// methods to move the scale up and down
 void servo_turn_up(Task* me)
 {
   if(pos != 0)
   {
-    myservo.write(pos);                                                          // tell servo to go to position in variable 'pos'
+    myservo.write(pos);               // tell servo to go to position in variable 'pos'
     pos -= 1;
   }
   else
@@ -113,12 +115,11 @@ void servo_turn_up(Task* me)
     SoftTimer.remove(&t_servo_turn_up);
   }
 }
-
 void servo_turn_down(Task* me)
 {
   if(pos != 180)
   {
-    myservo.write(pos);                                                          // tell servo to go to position in variable 'pos'
+    myservo.write(pos);                // tell servo to go to position in variable 'pos'
     pos += 1;
   }
   else
@@ -127,6 +128,7 @@ void servo_turn_down(Task* me)
   }
 }
 
+// method to default the LCD
 boolean clear_lcd(Task* me)
 {
   lcd.clear();
@@ -137,17 +139,16 @@ boolean clear_lcd(Task* me)
   return true;
 }
 
+// methods to start the vibrator in steps
 boolean false_vibrator_running(Task* me)
 {
   digitalWrite(vibrator, LOW);
   flag_vibrator_running = false;
   return true;
 }
-
 boolean true_vibrator_running(Task* me)
 {
   digitalWrite(vibrator, HIGH);
-  
   t_false_vibrator_running.startDelayed();
   return true;
 }
@@ -169,6 +170,7 @@ void time_last_startup(Task* me)
     }
    }
 }
+
 // method to start mechanism
 void start_giveLoad(Task* me)
 {
@@ -180,8 +182,8 @@ void start_giveLoad(Task* me)
      SoftTimer.add(&t_giveLoad);
      SoftTimer.remove(&t_start_giveLoad);
    }
-
 }
+
 // mechanism
 void giveLoad(Task* me)
 {
@@ -190,7 +192,6 @@ void giveLoad(Task* me)
     pinMode(reset, OUTPUT);
     digitalWrite(reset, LOW);
   }
-  
   float scale_status = scale.get_units();
   
   if (!flag_load & !flag_vibrator_running & scale_status < stated_weight & pos == 0)
@@ -199,7 +200,6 @@ void giveLoad(Task* me)
     flag_vibrator_running = true;
     t_true_vibrator_running.startDelayed();
   }
-  
   if (scale_status >= stated_weight & !flag_load)
   {
     digitalWrite(vibrator, LOW);
@@ -215,8 +215,7 @@ void giveLoad(Task* me)
     lcd.write(char_bucket);
     lcd.write("g Energy");
     millis_process = current_millis;
-  }
-                                                                                  // wait 3 seconds and start the payout
+  }                                                                               // wait 3 seconds and start the payout
   if(current_millis - millis_process >= 3000.0 & flag_load & pos == 0)
   {
     lcd.clear();
@@ -235,18 +234,20 @@ void giveLoad(Task* me)
     SoftTimer.remove(&t_giveLoad);
   }
 }
-  
-void onRotate(short direction, Rotary* rotary) {
-  
+
+void onRotate(short direction, Rotary* rotary)
+{  
   if(mode == 5)
   {
-    if(direction == DIRECTION_CW) {
+    if(direction == DIRECTION_CW) 
+    {
       if(stated_weight < 50.0)
       {
         stated_weight += 5.0;
       }
     }
-    if(direction == DIRECTION_CCW) {
+    if(direction == DIRECTION_CCW) 
+    {
       if(stated_weight >= 10.0)
       {
         stated_weight -= 5.0;
@@ -260,16 +261,17 @@ void onRotate(short direction, Rotary* rotary) {
     lcd.write(char_bucket);
     lcd.write("g");
   }
-  
   if(mode == 4)
   {
-    if(direction == DIRECTION_CW) {
+    if(direction == DIRECTION_CW) 
+    {
       if(time_to_start < 480)
       {
         time_to_start += 5;
       }
     }
-    if(direction == DIRECTION_CCW) {
+    if(direction == DIRECTION_CCW) 
+    {
       if(time_to_start >= 10)
       {
         time_to_start -= 5;
@@ -285,8 +287,8 @@ void onRotate(short direction, Rotary* rotary) {
   }
   t_clear_lcd.startDelayed();
 }
-
-void onRotPushPress() {
+void onRotPushPress() 
+{
     if(mode <= 5)
     {
       mode += 1;
